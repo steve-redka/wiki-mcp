@@ -30,7 +30,7 @@ wiki-mcp/
       wikis.py           # per-wiki config loading
     wiki_mcp/           # MCP server, depends on wikibot
       server.py
-      tools.py          # get_page, get_template_schema, propose_edit, submit_edit, search
+      tools.py          # get_page, get_template_schema, propose_edit, submit_edit, upload_file, search
     wiki_mcp_cli/        # `wiki-mcp init`, batch/dry-run CLI
   config/
     wikis/
@@ -146,5 +146,3 @@ publishes directly.
 
 ## Todo
 - Fix credential leakage issue
-- Write a proper readme
-- Upload capability

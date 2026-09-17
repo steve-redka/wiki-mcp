@@ -46,13 +46,16 @@ class WikiClient:
         if elapsed < self._min_request_interval:
             time.sleep(self._min_request_interval - elapsed)
 
-    def _request(self, method: str, params: dict) -> dict:
+    def _request(self, method: str, params: dict, *, files: dict | None = None) -> dict:
         self._throttle()
         params = {**params, "format": "json"}
-        response = self.session.request(
-            method, self.config.api_url, params=params if method == "GET" else None,
-            data=params if method == "POST" else None, timeout=30,
-        )
+        if files:
+            response = self.session.post(self.config.api_url, data=params, files=files, timeout=60)
+        else:
+            response = self.session.request(
+                method, self.config.api_url, params=params if method == "GET" else None,
+                data=params if method == "POST" else None, timeout=30,
+            )
         self._last_request_time = time.monotonic()
         response.raise_for_status()
         payload = response.json()
@@ -106,6 +109,15 @@ class WikiClient:
             raise WikiClientError(f"Login failed: {result}{detail}{hint}")
         self._logged_in = True
 
+    def get_user_rights(self) -> list[str]:
+        """Effective rights for the current login, including whatever the
+        Bot Password's grants restrict them to (not just the underlying
+        account's full rights) — used to check upload permission upfront
+        rather than finding out only after an upload fails.
+        """
+        payload = self._get({"action": "query", "meta": "userinfo", "uiprop": "rights"})
+        return payload["query"]["userinfo"].get("rights", [])
+
     # -- pages -----------------------------------------------------------
 
     def get_page(self, title: str) -> Page:
@@ -153,3 +165,33 @@ class WikiClient:
         else:
             params["createonly"] = True
         self._post(params)
+
+    # -- files -----------------------------------------------------------
+
+    def upload_file(self, filename: str, content: bytes, *, comment: str = "", ignore_warnings: bool = False) -> dict:
+        """Upload a file (e.g. an icon or screenshot) to the wiki's File
+        namespace. filename is the target name on the wiki, not a local path
+        — content is the raw bytes to upload.
+        """
+        if not self._logged_in:
+            raise WikiClientError("Must call login() before uploading")
+        csrf_token = self._get_token("csrf")
+        payload = self._request(
+            "POST",
+            {
+                "action": "upload",
+                "filename": filename,
+                "comment": comment,
+                "token": csrf_token,
+                "ignorewarnings": "1" if ignore_warnings else "0",
+            },
+            files={"file": (filename, content)},
+        )
+        result = payload.get("upload", {})
+        if result.get("result") == "Warning":
+            raise WikiClientError(
+                f"Upload warning (pass ignore_warnings=True to override): {result.get('warnings')}"
+            )
+        if result.get("result") != "Success":
+            raise WikiClientError(f"Upload failed: {result}")
+        return result

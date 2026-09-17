@@ -69,6 +69,24 @@ def submit_edit(
 
 
 @mcp.tool()
+def upload_file(
+    wiki: str,
+    filename: str,
+    file_path: str,
+    comment: str = "",
+    ignore_warnings: bool = False,
+    confirm: bool = False,
+) -> dict:
+    """Upload a local file (e.g. an icon or screenshot) to the wiki's File
+    namespace. file_path is a path on the machine running this server, not
+    the wiki. Gated by the same publish_mode rules as submit_edit.
+    """
+    return tools.upload_file(
+        wiki, filename, file_path, comment=comment, ignore_warnings=ignore_warnings, confirm=confirm
+    ).model_dump()
+
+
+@mcp.tool()
 def search_pages(wiki: str, query: str, limit: int = 10) -> list[str]:
     """Search a wiki for pages matching a query."""
     return tools.search_pages(wiki, query, limit)

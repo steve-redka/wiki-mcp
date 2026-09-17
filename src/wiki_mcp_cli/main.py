@@ -68,6 +68,7 @@ def init(
     client = WikiClient(config)
     client.login(username=bot_username, password=bot_password)
     typer.echo("  Login OK")
+    _check_upload_permission(client)
 
     _write_secret(env_var, bot_password)
     typer.echo("  Wrote credentials to .env (make sure it's gitignored)")
@@ -114,6 +115,7 @@ def harvest(
     client = WikiClient(config)
     client.login()
     typer.echo(f"Logged in to {config.site}")
+    _check_upload_permission(client)
 
     siteinfo = client.call({"action": "query", "meta": "siteinfo", "siprop": "extensions"})
     has_templatedata = "TemplateData" in {e["name"] for e in siteinfo["query"].get("extensions", [])}
@@ -194,6 +196,17 @@ def _harvest_templates(client: WikiClient, *, has_templatedata: bool, schema_dir
     still_unresolved = [t for t in harvest_titles if t not in schemas]
     if still_unresolved:
         typer.echo(f"  {len(still_unresolved)} templates couldn't be resolved by any method: {sorted(still_unresolved)}")
+
+
+def _check_upload_permission(client: WikiClient) -> None:
+    rights = client.get_user_rights()
+    if "upload" in rights:
+        typer.echo("  Bot password has upload permission")
+    else:
+        typer.echo(
+            "  Bot password does NOT have upload permission "
+            "(add the 'Upload new files' grant on Special:BotPasswords if you need upload_file to work)"
+        )
 
 
 def _discover_guidelines(client: WikiClient) -> list[str]:
