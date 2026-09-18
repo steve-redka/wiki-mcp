@@ -69,6 +69,25 @@ def submit_edit(
 
 
 @mcp.tool()
+def propose_raw_edit(wiki: str, title: str, new_wikitext: str) -> dict:
+    """Preview a full-page wikitext edit as a unified diff, without writing
+    anything. Use this for anything propose_edit/submit_edit can't do: new
+    sections, prose rewrites, changes outside a single template's params.
+    There's no schema validation for this path, so review the diff closely.
+    """
+    return tools.propose_raw_edit(wiki, title, new_wikitext).model_dump()
+
+
+@mcp.tool()
+def submit_raw_edit(wiki: str, title: str, new_wikitext: str, summary: str, confirm: bool = False) -> dict:
+    """Write a full-page wikitext edit. Gated by the wiki's publish_mode like
+    submit_edit, but with no param-schema validation, since this isn't
+    scoped to one template. Always call propose_raw_edit first.
+    """
+    return tools.submit_raw_edit(wiki, title, new_wikitext, summary, confirm=confirm).model_dump()
+
+
+@mcp.tool()
 def upload_file(
     wiki: str,
     filename: str,

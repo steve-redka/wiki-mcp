@@ -40,8 +40,11 @@ command needed to connect this to Claude Code, so no manual setup is required.
 
 - Nothing gets published without your say-so, unless a wiki is explicitly set
   to auto-publish.
-- An edit is only ever allowed to change fields that genuinely exist on the
-  wiki's template; an unrecognized field name is rejected, not written.
+- Template-based edits are only ever allowed to change fields that genuinely
+  exist on the wiki's template; an unrecognized field name is rejected, not
+  written. Full-page edits (for prose, new sections, anything outside a
+  template's fields) skip that check since there's no fixed schema for free
+  text, so review those diffs more carefully, especially outside auto mode.
 - Real credentials never appear in the project's config files or get shared
   anywhere; they're kept in a local, git-ignored file.
 

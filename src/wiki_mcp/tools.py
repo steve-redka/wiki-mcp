@@ -5,6 +5,7 @@ is the only place that knows about `mcp`.
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -32,6 +33,13 @@ class ProposedEdit(BaseModel):
 class SubmitResult(BaseModel):
     published: bool
     reason: str
+
+
+class RawEditDiff(BaseModel):
+    wiki: str
+    title: str
+    diff: str
+    changed: bool
 
 
 def _publish_gate(wiki: str, confirm: bool) -> SubmitResult | None:
@@ -125,6 +133,53 @@ def submit_edit(
     page = client.get_page(title)
     new_wikitext = set_params(page.wikitext, template_name, params)
     client.edit_page(title, new_wikitext, summary=summary, base_revid=page.revid)
+    return SubmitResult(published=True, reason="edit submitted")
+
+
+def propose_raw_edit(wiki: str, title: str, new_wikitext: str) -> RawEditDiff:
+    """Preview a full-page wikitext edit as a unified diff, without writing
+    anything. Use this for changes propose_edit/submit_edit can't do: new
+    sections, prose rewrites, anything outside a single template's params.
+
+    There's no schema to validate against here, unlike propose_edit, since
+    this isn't scoped to one template; review the diff carefully before
+    calling submit_raw_edit, especially outside auto publish_mode.
+    """
+    client = registry.get_client(wiki)
+    page = client.get_page_if_exists(title)
+    current_text = page.wikitext if page is not None else ""
+    diff_lines = difflib.unified_diff(
+        current_text.splitlines(keepends=True),
+        new_wikitext.splitlines(keepends=True),
+        fromfile=f"{title} (current)",
+        tofile=f"{title} (proposed)",
+    )
+    return RawEditDiff(wiki=wiki, title=title, diff="".join(diff_lines), changed=current_text != new_wikitext)
+
+
+def submit_raw_edit(
+    wiki: str,
+    title: str,
+    new_wikitext: str,
+    summary: str,
+    *,
+    confirm: bool = False,
+) -> SubmitResult:
+    """Writes a full-page wikitext edit, gated by the same dry_run/review/auto
+    publish_mode rules as submit_edit, but with no param-schema validation.
+    """
+    proposed = propose_raw_edit(wiki, title, new_wikitext)
+    if not proposed.changed:
+        return SubmitResult(published=False, reason="No changes: proposed wikitext matches current page")
+
+    blocked = _publish_gate(wiki, confirm)
+    if blocked is not None:
+        return blocked
+
+    client = registry.get_client(wiki)
+    page = client.get_page_if_exists(title)
+    base_revid = page.revid if page is not None else None
+    client.edit_page(title, new_wikitext, summary=summary, base_revid=base_revid)
     return SubmitResult(published=True, reason="edit submitted")
 
 

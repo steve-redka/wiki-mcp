@@ -30,7 +30,7 @@ wiki-mcp/
       wikis.py           # per-wiki config loading
     wiki_mcp/           # MCP server, depends on wikibot
       server.py
-      tools.py          # get_page, get_template_schema, propose_edit, submit_edit, upload_file, search
+      tools.py          # get_page, propose/submit_edit, propose/submit_raw_edit, upload_file, search
     wiki_mcp_cli/        # `wiki-mcp init`, batch/dry-run CLI
   config/
     wikis/
@@ -65,6 +65,20 @@ validation gate before any edit is proposed or submitted:
 4. Cache as JSON under `config/wikis/<wiki>/templates/`.
 5. `validate.py` rejects/flags any param in a proposed edit that isn't in the
    cached schema, instead of silently writing it.
+
+## Free-form edits: `propose_raw_edit` / `submit_raw_edit`
+
+`propose_edit`/`submit_edit` can only change a template's own fields; they
+can't add a new section, rewrite prose, or add content (like a focus-tree
+block) that isn't just filling in an existing template's params. For that,
+`propose_raw_edit`/`submit_raw_edit` take a full replacement wikitext for the
+page and produce a unified diff, gated by the same `publish_mode` rules as
+`submit_edit`.
+
+The tradeoff: there's no schema to validate against for free text, so this
+path has no anti-hallucination check at all. The `publish_mode: review` gate
+(human approves the diff before it's written) is the main safety net here,
+not param validation.
 
 ## Config generation: `wiki-mcp init <wiki-url>`
 
@@ -140,9 +154,6 @@ publishes directly.
 
 - Whether wiki.gg specifically runs the TemplateData extension (checked live via
   `siteinfo` during `init`, not assumed).
-- How much editorial judgment (rewriting prose, not just filling params) the
-  MCP-driven agent should be allowed by default vs. always deferring to
-  `publish_mode: review`.
 
 ## Todo
 - Fix credential leakage issue
