@@ -30,7 +30,7 @@ wiki-mcp/
       wikis.py           # per-wiki config loading
     wiki_mcp/           # MCP server, depends on wikibot
       server.py
-      tools.py          # get_page, propose/submit_edit, propose/submit_raw_edit, upload_file, search
+      tools.py          # get_page, list_sections, propose/submit_edit, propose/submit_raw_edit, upload_file, search
     wiki_mcp_cli/        # `wiki-mcp init`, batch/dry-run CLI
   config/
     wikis/
@@ -71,14 +71,22 @@ validation gate before any edit is proposed or submitted:
 `propose_edit`/`submit_edit` can only change a template's own fields; they
 can't add a new section, rewrite prose, or add content (like a focus-tree
 block) that isn't just filling in an existing template's params. For that,
-`propose_raw_edit`/`submit_raw_edit` take a full replacement wikitext for the
-page and produce a unified diff, gated by the same `publish_mode` rules as
-`submit_edit`.
+`propose_raw_edit`/`submit_raw_edit` take a replacement wikitext and produce
+a unified diff, gated by the same `publish_mode` rules as `submit_edit`.
 
 The tradeoff: there's no schema to validate against for free text, so this
 path has no anti-hallucination check at all. The `publish_mode: review` gate
 (human approves the diff before it's written) is the main safety net here,
 not param validation.
+
+Both tools take an optional `section` (an index from `list_sections`, or
+"new" to append a section), scoping the read/diff/write to just that section
+instead of the whole page. This isn't just a convenience: an agent's tool
+call has to fit in a single turn's output, so a full-page edit on a large
+page (hundreds of KB) can hit that ceiling even when the actual change is a
+handful of rows. Section scoping means the call only ever needs to carry the
+changed section's text, not the unrelated rest of the page. `get_page` takes
+the same `section` parameter for the read side of the same problem.
 
 ## Config generation: `wiki-mcp init <wiki-url>`
 

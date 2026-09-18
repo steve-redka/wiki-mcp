@@ -32,9 +32,21 @@ def list_wikis() -> list[str]:
 
 
 @mcp.tool()
-def get_page(wiki: str, title: str) -> str:
-    """Fetch a page's current wikitext."""
-    return tools.get_page(wiki, title)
+def get_page(wiki: str, title: str, section: str | int | None = None) -> str:
+    """Fetch a page's current wikitext. On large pages, call list_sections
+    first and pass its index here to fetch just that section instead of the
+    whole page.
+    """
+    return tools.get_page(wiki, title, section=section)
+
+
+@mcp.tool()
+def list_sections(wiki: str, title: str) -> list[dict]:
+    """Section index/title/anchor for a page. Use this to find which section
+    to target with get_page/propose_raw_edit/submit_raw_edit's section
+    parameter on a large page, without ever fetching its full text.
+    """
+    return tools.list_sections(wiki, title)
 
 
 @mcp.tool()
@@ -69,22 +81,41 @@ def submit_edit(
 
 
 @mcp.tool()
-def propose_raw_edit(wiki: str, title: str, new_wikitext: str) -> dict:
-    """Preview a full-page wikitext edit as a unified diff, without writing
-    anything. Use this for anything propose_edit/submit_edit can't do: new
-    sections, prose rewrites, changes outside a single template's params.
+def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | int | None = None) -> dict:
+    """Preview a wikitext edit as a unified diff, without writing anything.
+    Use this for anything propose_edit/submit_edit can't do: new sections,
+    prose rewrites, changes outside a single template's params.
+
+    On a large page, call list_sections first and pass its index as section
+    so new_wikitext only needs to contain that section, not the whole page —
+    the full page text would otherwise have to fit in a single tool call.
+    Use section="new" to append a brand new section instead of editing one.
+
     There's no schema validation for this path, so review the diff closely.
     """
-    return tools.propose_raw_edit(wiki, title, new_wikitext).model_dump()
+    return tools.propose_raw_edit(wiki, title, new_wikitext, section=section).model_dump()
 
 
 @mcp.tool()
-def submit_raw_edit(wiki: str, title: str, new_wikitext: str, summary: str, confirm: bool = False) -> dict:
-    """Write a full-page wikitext edit. Gated by the wiki's publish_mode like
+def submit_raw_edit(
+    wiki: str,
+    title: str,
+    new_wikitext: str,
+    summary: str,
+    section: str | int | None = None,
+    section_title: str | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Write a wikitext edit. Gated by the wiki's publish_mode like
     submit_edit, but with no param-schema validation, since this isn't
     scoped to one template. Always call propose_raw_edit first.
+
+    section/section_title mean the same as in propose_raw_edit — section_title
+    is only used (and required) when section="new".
     """
-    return tools.submit_raw_edit(wiki, title, new_wikitext, summary, confirm=confirm).model_dump()
+    return tools.submit_raw_edit(
+        wiki, title, new_wikitext, summary, section=section, section_title=section_title, confirm=confirm
+    ).model_dump()
 
 
 @mcp.tool()

@@ -120,16 +120,22 @@ class WikiClient:
 
     # -- pages -----------------------------------------------------------
 
-    def get_page(self, title: str) -> Page:
-        payload = self._get(
-            {
-                "action": "query",
-                "prop": "revisions",
-                "rvprop": "ids|content",
-                "rvslots": "main",
-                "titles": title,
-            }
-        )
+    def get_page(self, title: str, *, section: str | int | None = None) -> Page:
+        """Fetch a page's wikitext. Pass section (a numeric index from
+        list_sections) to fetch just that section's content instead of the
+        whole page — the returned revid is always the whole page's current
+        revision, since MediaWiki has no separate per-section revisions.
+        """
+        params = {
+            "action": "query",
+            "prop": "revisions",
+            "rvprop": "ids|content",
+            "rvslots": "main",
+            "titles": title,
+        }
+        if section is not None:
+            params["rvsection"] = str(section)
+        payload = self._get(params)
         pages = payload["query"]["pages"]
         (page,) = pages.values()
         if "missing" in page:
@@ -138,16 +144,52 @@ class WikiClient:
         wikitext = revision["slots"]["main"]["*"]
         return Page(title=page["title"], pageid=page["pageid"], wikitext=wikitext, revid=revision["revid"])
 
-    def get_page_if_exists(self, title: str) -> Page | None:
+    def get_page_if_exists(self, title: str, *, section: str | int | None = None) -> Page | None:
         try:
-            return self.get_page(title)
+            return self.get_page(title, section=section)
         except WikiClientError:
             return None
 
-    def edit_page(self, title: str, new_wikitext: str, *, summary: str, base_revid: int | None) -> None:
+    def get_current_revid(self, title: str) -> int | None:
+        """Just the current revision id, with no content fetched at all —
+        for when a caller (e.g. a section-scoped edit) needs base_revid for
+        conflict-safety without pulling the whole page across the wire.
+        """
+        payload = self._get({"action": "query", "prop": "revisions", "rvprop": "ids", "titles": title})
+        (page,) = payload["query"]["pages"].values()
+        if "missing" in page:
+            return None
+        return page["revisions"][0]["revid"]
+
+    def list_sections(self, title: str) -> list[dict]:
+        """Section index/title/anchor for a page, via action=parse&prop=sections
+        — lets a caller find which section to target without ever fetching
+        the page's full wikitext.
+        """
+        payload = self._get({"action": "parse", "page": title, "prop": "sections"})
+        return [
+            {"index": s["index"], "level": s["level"], "line": s["line"], "anchor": s["anchor"]}
+            for s in payload["parse"]["sections"]
+        ]
+
+    def edit_page(
+        self,
+        title: str,
+        new_wikitext: str,
+        *,
+        summary: str,
+        base_revid: int | None,
+        section: str | int | None = None,
+        section_title: str | None = None,
+    ) -> None:
         """Submit an edit. Pass the page's current revid as base_revid so
         MediaWiki rejects the edit on a concurrent change instead of silently
         clobbering it; pass None only to create a page that doesn't exist yet.
+
+        Pass section (a numeric index from list_sections, or "new" to append
+        a new section with section_title as its heading) to replace just that
+        section's content instead of the whole page — new_wikitext only needs
+        to contain that section, not the full page.
         """
         if not self._logged_in:
             raise WikiClientError("Must call login() before editing")
@@ -160,6 +202,10 @@ class WikiClient:
             "bot": True,
             "token": csrf_token,
         }
+        if section is not None:
+            params["section"] = str(section)
+        if section_title is not None:
+            params["sectiontitle"] = section_title
         if base_revid is not None:
             params["baserevid"] = base_revid
         else:

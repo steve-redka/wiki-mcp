@@ -59,9 +59,22 @@ def list_wikis() -> list[str]:
     return registry.list_wikis()
 
 
-def get_page(wiki: str, title: str) -> str:
+def get_page(wiki: str, title: str, section: str | int | None = None) -> str:
+    """Fetch a page's wikitext. Pass section (an index from list_sections) to
+    fetch just that section instead of the whole page — worth doing on large
+    pages, since the whole-page text has to fit in a single tool response.
+    """
     client = registry.get_client(wiki)
-    return client.get_page(title).wikitext
+    return client.get_page(title, section=section).wikitext
+
+
+def list_sections(wiki: str, title: str) -> list[dict]:
+    """Section index/title/anchor for a page, so a large page's sections can
+    be targeted individually (via get_page's/propose_raw_edit's/
+    submit_raw_edit's section parameter) without ever fetching the full text.
+    """
+    client = registry.get_client(wiki)
+    return client.list_sections(title)
 
 
 def get_template_schema(wiki: str, template_name: str) -> dict:
@@ -136,18 +149,28 @@ def submit_edit(
     return SubmitResult(published=True, reason="edit submitted")
 
 
-def propose_raw_edit(wiki: str, title: str, new_wikitext: str) -> RawEditDiff:
-    """Preview a full-page wikitext edit as a unified diff, without writing
-    anything. Use this for changes propose_edit/submit_edit can't do: new
-    sections, prose rewrites, anything outside a single template's params.
+def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | int | None = None) -> RawEditDiff:
+    """Preview a wikitext edit as a unified diff, without writing anything.
+    Use this for changes propose_edit/submit_edit can't do: new sections,
+    prose rewrites, anything outside a single template's params.
+
+    Pass section (an index from list_sections) to scope both the read and
+    the diff to just that section, so new_wikitext only needs to contain the
+    changed section, not the whole page — this matters on large pages, since
+    the full text has to fit in a single tool call/response either way.
+    section="new" is for appending a brand new section: there's nothing to
+    read yet, so the diff is shown against empty content.
 
     There's no schema to validate against here, unlike propose_edit, since
     this isn't scoped to one template; review the diff carefully before
     calling submit_raw_edit, especially outside auto publish_mode.
     """
-    client = registry.get_client(wiki)
-    page = client.get_page_if_exists(title)
-    current_text = page.wikitext if page is not None else ""
+    if section == "new":
+        current_text = ""
+    else:
+        client = registry.get_client(wiki)
+        page = client.get_page_if_exists(title, section=section)
+        current_text = page.wikitext if page is not None else ""
     diff_lines = difflib.unified_diff(
         current_text.splitlines(keepends=True),
         new_wikitext.splitlines(keepends=True),
@@ -163,12 +186,16 @@ def submit_raw_edit(
     new_wikitext: str,
     summary: str,
     *,
+    section: str | int | None = None,
+    section_title: str | None = None,
     confirm: bool = False,
 ) -> SubmitResult:
-    """Writes a full-page wikitext edit, gated by the same dry_run/review/auto
+    """Writes a wikitext edit, gated by the same dry_run/review/auto
     publish_mode rules as submit_edit, but with no param-schema validation.
+    See propose_raw_edit for what section (and section_title, for
+    section="new") do.
     """
-    proposed = propose_raw_edit(wiki, title, new_wikitext)
+    proposed = propose_raw_edit(wiki, title, new_wikitext, section=section)
     if not proposed.changed:
         return SubmitResult(published=False, reason="No changes: proposed wikitext matches current page")
 
@@ -177,9 +204,10 @@ def submit_raw_edit(
         return blocked
 
     client = registry.get_client(wiki)
-    page = client.get_page_if_exists(title)
-    base_revid = page.revid if page is not None else None
-    client.edit_page(title, new_wikitext, summary=summary, base_revid=base_revid)
+    base_revid = client.get_current_revid(title)
+    client.edit_page(
+        title, new_wikitext, summary=summary, base_revid=base_revid, section=section, section_title=section_title
+    )
     return SubmitResult(published=True, reason="edit submitted")
 
 

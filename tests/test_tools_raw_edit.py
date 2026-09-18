@@ -91,3 +91,71 @@ def test_submit_raw_edit_writes_when_confirmed(tmp_path, monkeypatch):
     result = tools.submit_raw_edit("testwiki4", "Sandbox", "new text\n", "test edit", confirm=True)
 
     assert result.published
+
+
+@responses.activate
+def test_propose_raw_edit_with_section_only_reads_that_section(tmp_path, monkeypatch):
+    _setup_wiki(tmp_path, "testwiki5", monkeypatch)
+    _mock_login()
+    section_response = {
+        "query": {
+            "pages": {
+                "1": {
+                    "pageid": 1,
+                    "title": "Sandbox",
+                    "revisions": [{"revid": 5, "slots": {"main": {"*": "== Utah ==\nold rows\n"}}}],
+                }
+            }
+        }
+    }
+    responses.add(responses.GET, "https://example.wiki.gg/api.php", json=section_response)
+
+    result = tools.propose_raw_edit("testwiki5", "Sandbox", "== Utah ==\nnew rows\n", section=3)
+
+    assert result.changed
+    sent_params = responses.calls[-1].request.params
+    assert sent_params["rvsection"] == "3"
+
+
+@responses.activate
+def test_propose_raw_edit_new_section_diffs_against_empty_without_reading(tmp_path, monkeypatch):
+    _setup_wiki(tmp_path, "testwiki6", monkeypatch)
+    _mock_login()
+    # No REVISIONS_RESPONSE registered for a get_page call: this must not
+    # attempt to read anything for section="new", or responses would error
+    # on an unmatched request.
+    result = tools.propose_raw_edit("testwiki6", "Sandbox", "== New Section ==\ntext\n", section="new")
+
+    assert result.changed
+    assert "+== New Section ==" in result.diff
+
+
+@responses.activate
+def test_submit_raw_edit_with_section_sends_section_param(tmp_path, monkeypatch):
+    _setup_wiki(tmp_path, "testwiki7", monkeypatch, publish_mode="auto")
+    _mock_login()
+    section_response = {
+        "query": {
+            "pages": {
+                "1": {
+                    "pageid": 1,
+                    "title": "Sandbox",
+                    "revisions": [{"revid": 5, "slots": {"main": {"*": "old rows\n"}}}],
+                }
+            }
+        }
+    }
+    responses.add(responses.GET, "https://example.wiki.gg/api.php", json=section_response)  # propose's read
+    responses.add(
+        responses.GET,
+        "https://example.wiki.gg/api.php",
+        json={"query": {"pages": {"1": {"pageid": 1, "title": "Sandbox", "revisions": [{"revid": 5}]}}}},
+    )  # submit's get_current_revid
+    responses.add(responses.GET, "https://example.wiki.gg/api.php", json={"query": {"tokens": {"csrftoken": "c"}}})
+    responses.add(responses.POST, "https://example.wiki.gg/api.php", json={"edit": {"result": "Success"}})
+
+    result = tools.submit_raw_edit("testwiki7", "Sandbox", "new rows\n", "test edit", section=3)
+
+    assert result.published
+    sent_body = responses.calls[-1].request.body
+    assert "section=3" in sent_body
