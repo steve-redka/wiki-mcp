@@ -60,6 +60,25 @@ command needed to connect this to Claude Code, so no manual setup is required.
 - Real credentials never appear in the project's config files or get shared
   anywhere; they're kept in a local, git-ignored file.
 
+## Editing large or whole pages
+
+For full-page edits, prefer `propose_patch_edit`/`submit_patch_edit` over
+`propose_raw_edit`/`submit_raw_edit` whenever you're changing existing text
+rather than adding something new. The raw-edit tools take a full replacement
+page/section, which on a large article means an AI assistant has to
+regenerate the entire thing on every single edit (burning tokens) and keep a
+copy of it in its context for the rest of the session. The patch tools take
+`old_string`/`new_string` instead, a find-and-replace against the live page
+applied server-side, so only the part actually changing has to pass through
+the assistant at all. It still needs to have read the page first (a plain
+`get_page` call) to know what to match, but that's a one-time cost rather
+than one paid on every edit.
+
+`old_string` has to match the current text exactly once, so include enough
+surrounding context to make it unique. Reach for `propose_raw_edit`/
+`submit_raw_edit` instead when there's genuinely nothing yet to match
+against, such as a brand-new section or a brand-new page.
+
 ## Examples
 
 todo

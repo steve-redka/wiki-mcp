@@ -189,7 +189,9 @@ def submit_edit(
 def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | int | None = None) -> RawEditDiff:
     """Preview a wikitext edit as a unified diff, without writing anything.
     Use this for changes propose_edit/submit_edit can't do: new sections,
-    prose rewrites, anything outside a single template's params.
+    prose rewrites, anything outside a single template's params. If you're
+    changing existing text rather than adding new content, prefer
+    propose_patch_edit instead — it doesn't need the full replacement text.
 
     Pass section (an index from list_sections) to scope both the read and
     the diff to just that section, so new_wikitext only needs to contain the
@@ -221,6 +223,92 @@ def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | in
     return RawEditDiff(
         wiki=wiki, title=title, diff="".join(diff_lines), changed=current_text != new_wikitext, link_issues=link_issues
     )
+
+
+def _apply_patch(wiki: str, title: str, old_string: str, new_string: str, section: str | int | None) -> tuple[str, str]:
+    """Read the current page/section text and apply a single old_string ->
+    new_string replacement, requiring old_string to appear exactly once so
+    the patch can't silently land in the wrong place (or the wrong one of
+    several similar spots).
+    """
+    if section == "new":
+        raise ValueError(
+            'section="new" has no existing text to match against; use propose_raw_edit to add a new section'
+        )
+    client = registry.get_client(wiki)
+    page = client.get_page_if_exists(title, section=section)
+    current_text = page.wikitext if page is not None else ""
+    count = current_text.count(old_string)
+    if count == 0:
+        raise ValueError("old_string not found in current text")
+    if count > 1:
+        raise ValueError(f"old_string matches {count} times; include more surrounding context to make it unique")
+    return current_text, current_text.replace(old_string, new_string, 1)
+
+
+def propose_patch_edit(
+    wiki: str, title: str, old_string: str, new_string: str, section: str | int | None = None
+) -> RawEditDiff:
+    """Preview a targeted find-and-replace edit as a unified diff, without
+    writing anything and without needing the whole page/section as input.
+
+    old_string must match the current page/section text exactly once — read
+    it first with get_page (optionally scoped with a section index from
+    list_sections) to copy enough surrounding context to make it unique.
+    Prefer this over propose_raw_edit whenever you're changing existing
+    text: propose_raw_edit needs the full replacement text as an argument,
+    which on a large page means regenerating the entire page/section for
+    every edit; this only needs the snippet that's actually changing.
+    Not for adding brand-new content with nothing to match against (a new
+    section, a new page) — use propose_raw_edit for that.
+
+    [[Links]] in new_string that don't resolve against the wiki's cached
+    page index are flagged in link_issues, same as propose_raw_edit.
+    """
+    current_text, new_text = _apply_patch(wiki, title, old_string, new_string, section)
+    diff_lines = difflib.unified_diff(
+        current_text.splitlines(keepends=True),
+        new_text.splitlines(keepends=True),
+        fromfile=f"{title} (current)",
+        tofile=f"{title} (proposed)",
+    )
+    link_issues = _check_links(wiki, new_string)
+    return RawEditDiff(
+        wiki=wiki, title=title, diff="".join(diff_lines), changed=current_text != new_text, link_issues=link_issues
+    )
+
+
+def submit_patch_edit(
+    wiki: str,
+    title: str,
+    old_string: str,
+    new_string: str,
+    summary: str,
+    *,
+    section: str | int | None = None,
+    confirm: bool = False,
+) -> SubmitResult:
+    """Write a targeted find-and-replace edit, gated by the same
+    dry_run/review/auto publish_mode rules as submit_raw_edit. Always call
+    propose_patch_edit first.
+
+    Re-reads the current text and re-applies old_string -> new_string itself
+    rather than trusting the proposed diff, so a page edited elsewhere since
+    propose fails the same old_string uniqueness check instead of silently
+    landing in the wrong place.
+    """
+    current_text, new_text = _apply_patch(wiki, title, old_string, new_string, section)
+    if current_text == new_text:
+        return SubmitResult(published=False, reason="No changes: old_string and new_string are identical")
+
+    blocked = _publish_gate(wiki, confirm)
+    if blocked is not None:
+        return blocked
+
+    client = registry.get_client(wiki)
+    base_revid = client.get_current_revid(title)
+    client.edit_page(title, new_text, summary=summary, base_revid=base_revid, section=section)
+    return SubmitResult(published=True, reason="edit submitted")
 
 
 def submit_raw_edit(

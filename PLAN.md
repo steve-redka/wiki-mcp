@@ -32,7 +32,7 @@ wiki-mcp/
       wikis.py           # per-wiki config loading
     wiki_mcp/           # MCP server, depends on wikibot
       server.py
-      tools.py          # get_page, list_sections, get_guidelines, propose/submit_edit, propose/submit_raw_edit, upload_file, search
+      tools.py          # get_page, list_sections, get_guidelines, propose/submit_edit, propose/submit_raw_edit, propose/submit_patch_edit, upload_file, search
     wiki_mcp_cli/        # `wiki-mcp init`, batch/dry-run CLI
   config/
     wikis/
@@ -133,6 +133,33 @@ page (hundreds of KB) can hit that ceiling even when the actual change is a
 handful of rows. Section scoping means the call only ever needs to carry the
 changed section's text, not the unrelated rest of the page. `get_page` takes
 the same `section` parameter for the read side of the same problem.
+
+Section scoping doesn't help an agent that's making a small change somewhere
+in a section that's itself still large (or one that edits whole pages by
+habit): `new_wikitext` still has to be the entire section/page, regenerated
+from scratch on every single edit, which is both an LLM output-token cost
+and a copy of that text sitting in context for the rest of the session.
+
+## Targeted edits: `propose_patch_edit` / `submit_patch_edit`
+
+Same idea as `propose_raw_edit`/`submit_raw_edit` (diff preview then gated
+write, no schema), but instead of a replacement `new_wikitext`, these take
+`old_string`/`new_string`, the same find-and-replace shape as this project's
+own editor tooling. The current page/section text is fetched server-side
+and `old_string` is replaced in it; the agent never has to receive or
+re-emit text it isn't actually changing.
+
+`old_string` must match the current text exactly once. Zero matches means
+it doesn't exist (or context drifted since it was last read); more than one
+means the replacement is ambiguous, so the agent must include enough
+surrounding text for a unique match rather than risk it landing at the
+wrong occurrence. `submit_patch_edit` re-reads and re-matches at write time
+(not just re-checking `base_revid`), so a page that changed since propose
+fails the same uniqueness check instead of silently patching the wrong spot.
+
+This only works for changing existing text; adding wholly new content (a
+new section, a new page) still goes through `propose_raw_edit`/
+`submit_raw_edit`, since there's nothing to match against yet.
 
 ## Config generation: `wiki-mcp init <wiki-url>`
 

@@ -97,7 +97,9 @@ def submit_edit(
 def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | int | None = None) -> dict:
     """Preview a wikitext edit as a unified diff, without writing anything.
     Use this for anything propose_edit/submit_edit can't do: new sections,
-    prose rewrites, changes outside a single template's params.
+    prose rewrites, changes outside a single template's params. If you're
+    changing existing text rather than adding brand-new content, use
+    propose_patch_edit instead — it never needs the full page/section text.
 
     On a large page, call list_sections first and pass its index as section
     so new_wikitext only needs to contain that section, not the whole page —
@@ -132,6 +134,49 @@ def submit_raw_edit(
     """
     return tools.submit_raw_edit(
         wiki, title, new_wikitext, summary, section=section, section_title=section_title, confirm=confirm
+    ).model_dump()
+
+
+@mcp.tool()
+def propose_patch_edit(
+    wiki: str, title: str, old_string: str, new_string: str, section: str | int | None = None
+) -> dict:
+    """Preview a targeted find-and-replace edit as a unified diff, without
+    writing anything and without needing the whole page/section as input.
+    Prefer this over propose_raw_edit whenever you're changing existing
+    text (fixing a value, rewording a sentence, editing a table row) rather
+    than adding brand-new content — you only send the snippet that's
+    actually changing, instead of regenerating the whole page/section on
+    every edit.
+
+    old_string must match the current page/section text exactly once; read
+    it first with get_page (optionally scoped via a section index from
+    list_sections) to copy enough surrounding context to make it unique.
+    Not for new sections or new pages — there's nothing to match against,
+    so use propose_raw_edit for those instead.
+
+    [[Links]] in new_string that don't resolve against the wiki's cached
+    page index are flagged in link_issues, same as propose_raw_edit.
+    """
+    return tools.propose_patch_edit(wiki, title, old_string, new_string, section=section).model_dump()
+
+
+@mcp.tool()
+def submit_patch_edit(
+    wiki: str,
+    title: str,
+    old_string: str,
+    new_string: str,
+    summary: str,
+    section: str | int | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Write a targeted find-and-replace edit. Gated by the same
+    dry_run/review/auto publish_mode rules as submit_raw_edit. Always call
+    propose_patch_edit first.
+    """
+    return tools.submit_patch_edit(
+        wiki, title, old_string, new_string, summary, section=section, confirm=confirm
     ).model_dump()
 
 
