@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from wiki_mcp import registry
 from wikibot.client import WikiClientError
 from wikibot.diff import TemplateDiff, diff_params
+from wikibot.links import LinkIssue, find_unresolved_links
 from wikibot.parser import find_templates, get_params, set_params
 from wikibot.validate import ValidationResult, validate_params
 from wikibot.wikis import PublishMode
@@ -24,6 +25,7 @@ class ProposedEdit(BaseModel):
     template_name: str
     diff: TemplateDiff
     validation: ValidationResult
+    link_issues: list[LinkIssue] = []
 
     @property
     def ok(self) -> bool:
@@ -40,6 +42,7 @@ class RawEditDiff(BaseModel):
     title: str
     diff: str
     changed: bool
+    link_issues: list[LinkIssue] = []
 
 
 def _publish_gate(wiki: str, confirm: bool) -> SubmitResult | None:
@@ -57,6 +60,34 @@ def _publish_gate(wiki: str, confirm: bool) -> SubmitResult | None:
 
 def list_wikis() -> list[str]:
     return registry.list_wikis()
+
+
+def get_guidelines(wiki: str) -> str:
+    """Cached editing-guideline text for a wiki: harvested wiki guideline
+    pages plus the user's own custom.md preferences (personal conventions
+    the wiki's own guidelines don't state), combined by `wiki-mcp
+    init`/`harvest`. Reads local disk, not the live wiki, so call this once
+    per session rather than re-fetching guideline pages with get_page.
+    """
+    text = registry.get_guidelines_text(wiki)
+    if not text:
+        return (
+            "No cached guidelines for this wiki. Run `wiki-mcp init` or "
+            "`wiki-mcp harvest <wiki>` to fetch some, or add personal "
+            "preferences to its guidelines/custom.md."
+        )
+    return text
+
+
+def _check_links(wiki: str, wikitext: str) -> list[LinkIssue]:
+    """Flag [[links]] in wikitext that don't resolve against the wiki's
+    cached page/redirect index. Empty (not an error) when no index has been
+    harvested for this wiki yet.
+    """
+    index = registry.get_page_index(wiki)
+    if index is None:
+        return []
+    return find_unresolved_links(wikitext, index)
 
 
 def get_page(wiki: str, title: str, section: str | int | None = None) -> str:
@@ -100,6 +131,9 @@ def _current_params(wiki: str, title: str, template_name: str) -> dict[str, str]
 def propose_edit(wiki: str, title: str, template_name: str, params: dict[str, str]) -> ProposedEdit:
     """Computes a diff and validates proposed params against the harvested
     schema. Never writes to the wiki — this is the "show me first" step.
+    Also flags [[links]] in param values that don't resolve against the
+    wiki's cached page/redirect index (see link_issues on the result) —
+    advisory, not a validation failure, since a redlink can be intentional.
     """
     schemas = registry.get_schemas(wiki)
     schema = schemas.get(template_name)
@@ -109,7 +143,10 @@ def propose_edit(wiki: str, title: str, template_name: str, params: dict[str, st
     current = _current_params(wiki, title, template_name)
     diff = diff_params(template_name, current, params)
     validation = validate_params(schema, params)
-    return ProposedEdit(wiki=wiki, title=title, template_name=template_name, diff=diff, validation=validation)
+    link_issues = _check_links(wiki, "\n".join(params.values()))
+    return ProposedEdit(
+        wiki=wiki, title=title, template_name=template_name, diff=diff, validation=validation, link_issues=link_issues
+    )
 
 
 def submit_edit(
@@ -163,7 +200,10 @@ def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | in
 
     There's no schema to validate against here, unlike propose_edit, since
     this isn't scoped to one template; review the diff carefully before
-    calling submit_raw_edit, especially outside auto publish_mode.
+    calling submit_raw_edit, especially outside auto publish_mode. [[Links]]
+    in new_wikitext that don't resolve against the wiki's cached page index
+    are flagged in link_issues (advisory, not blocking — a redlink can be
+    intentional), each with fuzzy-matched suggestions for the real title.
     """
     if section == "new":
         current_text = ""
@@ -177,7 +217,10 @@ def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | in
         fromfile=f"{title} (current)",
         tofile=f"{title} (proposed)",
     )
-    return RawEditDiff(wiki=wiki, title=title, diff="".join(diff_lines), changed=current_text != new_wikitext)
+    link_issues = _check_links(wiki, new_wikitext)
+    return RawEditDiff(
+        wiki=wiki, title=title, diff="".join(diff_lines), changed=current_text != new_wikitext, link_issues=link_issues
+    )
 
 
 def submit_raw_edit(

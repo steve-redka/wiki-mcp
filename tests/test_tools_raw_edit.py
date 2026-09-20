@@ -2,6 +2,8 @@ import responses
 import yaml
 
 from wiki_mcp import registry, tools
+from wikibot.guidelines import save_guideline_pages
+from wikibot.links import PageIndex, save_page_index
 
 REVISIONS_RESPONSE = {
     "query": {
@@ -36,6 +38,9 @@ def _setup_wiki(tmp_path, wiki_name, monkeypatch, publish_mode="review"):
     registry.get_config.cache_clear()
     registry.get_client.cache_clear()
     registry.get_schemas.cache_clear()
+    registry.get_guidelines_text.cache_clear()
+    registry.get_page_index.cache_clear()
+    return config_root
 
 
 def _mock_login():
@@ -159,3 +164,51 @@ def test_submit_raw_edit_with_section_sends_section_param(tmp_path, monkeypatch)
     assert result.published
     sent_body = responses.calls[-1].request.body
     assert "section=3" in sent_body
+
+
+def test_get_guidelines_reads_local_cache_with_no_api_call(tmp_path, monkeypatch):
+    config_root = _setup_wiki(tmp_path, "testwiki8", monkeypatch)
+    guidelines_dir = config_root / "testwiki8" / "guidelines"
+    save_guideline_pages({"Project:Manual of Style": "Keep it in-universe."}, guidelines_dir)
+
+    # No responses registered at all: a live API call here would error on an
+    # unmatched request, since get_guidelines must be a pure local read.
+    text = tools.get_guidelines("testwiki8")
+
+    assert "Keep it in-universe." in text
+
+
+def test_get_guidelines_explains_when_nothing_harvested_yet(tmp_path, monkeypatch):
+    _setup_wiki(tmp_path, "testwiki9", monkeypatch)
+
+    text = tools.get_guidelines("testwiki9")
+
+    assert "No cached guidelines" in text
+
+
+@responses.activate
+def test_propose_raw_edit_flags_unresolved_link_with_suggestion(tmp_path, monkeypatch):
+    config_root = _setup_wiki(tmp_path, "testwiki10", monkeypatch)
+    index = PageIndex(titles=["Republic of the Rio Grande"], redirects={})
+    save_page_index(index, config_root / "testwiki10" / "pages.json")
+    _mock_login()
+    responses.add(responses.GET, "https://example.wiki.gg/api.php", json=REVISIONS_RESPONSE)
+
+    result = tools.propose_raw_edit(
+        "testwiki10", "Sandbox", "Targets the [[Rio Grande Republic]] (RRG).\n"
+    )
+
+    assert len(result.link_issues) == 1
+    assert result.link_issues[0].target == "Rio Grande Republic"
+    assert "Republic of the Rio Grande" in result.link_issues[0].suggestions
+
+
+@responses.activate
+def test_propose_raw_edit_has_no_link_issues_when_no_index_harvested(tmp_path, monkeypatch):
+    _setup_wiki(tmp_path, "testwiki11", monkeypatch)
+    _mock_login()
+    responses.add(responses.GET, "https://example.wiki.gg/api.php", json=REVISIONS_RESPONSE)
+
+    result = tools.propose_raw_edit("testwiki11", "Sandbox", "Targets [[Anything]].\n")
+
+    assert result.link_issues == []

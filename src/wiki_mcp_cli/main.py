@@ -13,7 +13,9 @@ import typer
 import yaml
 from dotenv import find_dotenv, load_dotenv
 
+from wikibot import guidelines as guidelines_lib
 from wikibot.client import WikiClient, WikiClientError
+from wikibot.links import harvest_page_index, save_page_index
 from wikibot.schema import (
     TemplateSchema,
     find_pages_using_template,
@@ -34,6 +36,21 @@ CANDIDATE_GUIDELINE_PAGES = [
     "Project:Bots",
     "Help:Editing",
 ]
+
+# Terms to full-text search for guideline pages that don't match any of the
+# fixed candidate titles above — wikis often name theirs something wiki-
+# specific, like "New Editor's Guide to OWB Wiki Editing". Search, not exact
+# title match, so results are suggestions for the user to confirm rather
+# than auto-included.
+GUIDELINE_SEARCH_TERMS = [
+    "editing guide",
+    "editing guidelines",
+    "style guide",
+    "new editor",
+]
+
+# Mainspace, Project, and Help — where guideline pages conventionally live.
+GUIDELINE_SEARCH_NAMESPACES = "0|4|12"
 
 FULL_HARVEST_THRESHOLD = 200
 
@@ -77,11 +94,20 @@ def init(
     schema_dir = Path("config/wikis") / wiki_name / config.template_schema_dir
     _harvest_templates(client, has_templatedata=has_templatedata, schema_dir=schema_dir)
 
+    # 4b. Page/redirect index, for catching [[links]] to titles that don't exist
+    _harvest_page_index_interactive(client, Path("config/wikis") / wiki_name / "pages.json")
+
     # 5. Guidelines
     found_guidelines = _discover_guidelines(client)
     typer.echo(f"  Found guideline pages: {found_guidelines or '(none of the common ones)'}")
-    extra = typer.prompt("Any other guideline page titles to include? (comma-separated, blank to skip)", default="")
+    extra = typer.prompt(
+        "Any other guideline page titles to include? (comma-separated, blank to skip)",
+        default=_suggest_guidelines_prompt(client, found_guidelines),
+    )
     found_guidelines += [t.strip() for t in extra.split(",") if t.strip()]
+    _harvest_and_cache_guidelines(
+        client, found_guidelines, Path("config/wikis") / wiki_name / config.guidelines_dir
+    )
 
     # 6. Write config + summary
     config_full = WikiConfig(
@@ -123,9 +149,14 @@ def harvest(
     schema_dir = config_path.parent / wiki / config.template_schema_dir
     _harvest_templates(client, has_templatedata=has_templatedata, schema_dir=schema_dir)
 
+    _harvest_page_index_interactive(client, config_path.parent / wiki / "pages.json")
+
     discovered = _discover_guidelines(client)
     typer.echo(f"  Found guideline pages: {discovered or '(none of the common ones)'}")
-    extra = typer.prompt("Any other guideline page titles to include? (comma-separated, blank to skip)", default="")
+    extra = typer.prompt(
+        "Any other guideline page titles to include? (comma-separated, blank to skip)",
+        default=_suggest_guidelines_prompt(client, discovered),
+    )
     discovered += [t.strip() for t in extra.split(",") if t.strip()]
 
     merged_guidelines = sorted(set(config.guideline_pages) | set(discovered))
@@ -133,6 +164,8 @@ def harvest(
         updated = config.model_copy(update={"guideline_pages": merged_guidelines})
         config_path.write_text(yaml.safe_dump(updated.model_dump(mode="json"), sort_keys=False))
         typer.echo(f"  Updated {config_path} with {len(merged_guidelines)} guideline page(s)")
+
+    _harvest_and_cache_guidelines(client, merged_guidelines, config_path.parent / wiki / config.guidelines_dir)
 
     _print_mcp_add_hint()
 
@@ -218,6 +251,83 @@ def _discover_guidelines(client: WikiClient) -> list[str]:
         except WikiClientError:
             continue
     return found
+
+
+def _search_guideline_candidates(client: WikiClient, exclude: list[str]) -> list[str]:
+    """Full-text search the wiki for likely guideline pages beyond
+    CANDIDATE_GUIDELINE_PAGES's fixed titles, since a wiki's own guide is
+    often named something wiki-specific that no exact-title guess would
+    catch (e.g. "New Editor's Guide to OWB Wiki Editing"). Best-effort: a
+    search backend hiccup shouldn't break init/harvest, so failures are
+    swallowed per term.
+    """
+    excluded = {t.lower() for t in exclude}
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for term in GUIDELINE_SEARCH_TERMS:
+        try:
+            payload = client.call(
+                {
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": term,
+                    "srnamespace": GUIDELINE_SEARCH_NAMESPACES,
+                    "srlimit": 5,
+                }
+            )
+        except WikiClientError:
+            continue
+        for result in payload.get("query", {}).get("search", []):
+            title = result["title"]
+            key = title.lower()
+            if key in excluded or key in seen:
+                continue
+            seen.add(key)
+            candidates.append(title)
+    return candidates
+
+
+def _suggest_guidelines_prompt(client: WikiClient, exclude: list[str]) -> str:
+    """Fuzzy-search for guideline pages the exact-title check missed, echo
+    what turned up, and return them as a pre-filled default for the "any
+    other titles" prompt so accepting them is just pressing enter.
+    """
+    suggested = _search_guideline_candidates(client, exclude)
+    if suggested:
+        typer.echo(f"  Fuzzy search also turned up possible guideline pages: {suggested}")
+    return ", ".join(suggested)
+
+
+def _harvest_and_cache_guidelines(client: WikiClient, titles: list[str], directory: Path) -> None:
+    """Fetch each guideline page's wikitext and cache it locally, so
+    get_guidelines is a local read instead of a live fetch per page. Also
+    makes sure a starter custom.md exists for the user's own preferences.
+    """
+    pages = guidelines_lib.harvest_guideline_pages(client, titles)
+    guidelines_lib.save_guideline_pages(pages, directory)
+    custom_path = guidelines_lib.ensure_custom_guidelines_file(directory)
+    typer.echo(f"  Cached {len(pages)} guideline page(s) locally; add personal preferences to {custom_path}")
+
+
+def _harvest_page_index_interactive(client: WikiClient, index_path: Path) -> None:
+    """Cache the wiki's mainspace page/redirect titles locally so
+    propose_edit/propose_raw_edit can flag [[links]] that don't resolve to a
+    real page — one batch of paginated calls instead of a live lookup per
+    link. Prompted (default yes) since on a very large wiki it can mean a
+    fair number of requests.
+    """
+    do_it = typer.confirm(
+        "Harvest the page/redirect index too? Lets propose_edit/propose_raw_edit "
+        "flag [[links]] to titles that don't actually exist.",
+        default=True,
+    )
+    if not do_it:
+        return
+    typer.echo("  Fetching page/redirect index (this can take a while on a large wiki)...")
+    index = harvest_page_index(client)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    save_page_index(index, index_path)
+    typer.echo(f"  Cached {len(index.titles)} page title(s) and {len(index.redirects)} redirect(s)")
 
 
 def _write_secret(env_var: str, value: str) -> None:

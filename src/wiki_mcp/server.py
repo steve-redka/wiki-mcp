@@ -32,6 +32,17 @@ def list_wikis() -> list[str]:
 
 
 @mcp.tool()
+def get_guidelines(wiki: str) -> str:
+    """Cached editing-guideline text for a wiki: harvested wiki guideline
+    pages plus any personal preferences the user added to that wiki's
+    guidelines/custom.md. Reads a local cache, not the live wiki — call it
+    once per session before writing prose, rather than fetching guideline
+    pages individually with get_page.
+    """
+    return tools.get_guidelines(wiki)
+
+
+@mcp.tool()
 def get_page(wiki: str, title: str, section: str | int | None = None) -> str:
     """Fetch a page's current wikitext. On large pages, call list_sections
     first and pass its index here to fetch just that section instead of the
@@ -60,7 +71,9 @@ def get_template_schema(wiki: str, template_name: str) -> dict:
 @mcp.tool()
 def propose_edit(wiki: str, title: str, template_name: str, params: dict[str, str]) -> dict:
     """Compute a diff and validate proposed template params, without writing
-    anything. Always call this before submit_edit.
+    anything. Always call this before submit_edit. Also flags [[links]] in
+    param values that don't resolve against the wiki's cached page index
+    (result's link_issues) — advisory, review before calling submit_edit.
     """
     return tools.propose_edit(wiki, title, template_name, params).model_dump()
 
@@ -92,6 +105,10 @@ def propose_raw_edit(wiki: str, title: str, new_wikitext: str, section: str | in
     Use section="new" to append a brand new section instead of editing one.
 
     There's no schema validation for this path, so review the diff closely.
+    [[Links]] that don't resolve against the wiki's cached page index are
+    flagged in the result's link_issues, with suggested real titles —
+    advisory, not blocking, since a link to a page that doesn't exist yet
+    can be intentional.
     """
     return tools.propose_raw_edit(wiki, title, new_wikitext, section=section).model_dump()
 

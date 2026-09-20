@@ -9,6 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from wikibot.client import WikiClient
+from wikibot.guidelines import load_guidelines_text
+from wikibot.links import PageIndex, load_page_index
 from wikibot.schema import TemplateSchema, load_all_schemas
 from wikibot.wikis import WikiConfig, config_dir_for, load_wiki_config
 
@@ -49,6 +51,19 @@ def get_schemas(wiki: str) -> dict[str, TemplateSchema]:
     config = get_config(wiki)
     schema_dir = config_dir_for(_config_path(wiki)) / config.template_schema_dir
     return load_all_schemas(schema_dir)
+
+
+@lru_cache(maxsize=None)
+def get_guidelines_text(wiki: str) -> str:
+    config = get_config(wiki)
+    directory = config_dir_for(_config_path(wiki)) / config.guidelines_dir
+    return load_guidelines_text(directory)
+
+
+@lru_cache(maxsize=None)
+def get_page_index(wiki: str) -> PageIndex | None:
+    path = config_dir_for(_config_path(wiki)) / "pages.json"
+    return load_page_index(path)
 
 
 def list_wikis() -> list[str]:

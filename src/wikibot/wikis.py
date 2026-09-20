@@ -27,6 +27,7 @@ class WikiConfig(BaseModel):
     publish_mode: PublishMode = PublishMode.REVIEW
     template_schema_dir: str = "templates/"
     guideline_pages: list[str] = Field(default_factory=list)
+    guidelines_dir: str = "guidelines/"
 
     @property
     def api_url(self) -> str:

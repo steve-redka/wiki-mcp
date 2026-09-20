@@ -17,7 +17,11 @@ wiki-mcp init https://your-wiki-url-here
   login you create for this purpose on the wiki (under `Special:BotPasswords`
   on most wikis), not your normal account password.
 - Look at the wiki's templates to learn their structure.
-- Try to find the wiki's editing guidelines.
+- Try to find the wiki's editing guidelines, and cache their text locally
+  (along with a `guidelines/custom.md` file you can edit yourself, for house
+  style the wiki's own guidelines wouldn't think to mention).
+- Optionally download the wiki's page/redirect titles, so proposed edits can
+  flag `[[links]]` that don't actually resolve to a real page.
 - Save everything it learned into a config file for that wiki, so this only
   needs to be done once per wiki.
 
@@ -45,6 +49,10 @@ command needed to connect this to Claude Code, so no manual setup is required.
   written. Full-page edits (for prose, new sections, anything outside a
   template's fields) skip that check since there's no fixed schema for free
   text, so review those diffs more carefully, especially outside auto mode.
+- Both edit paths flag `[[links]]` that don't resolve against the wiki's
+  page/redirect index (with a suggested real title), so a hallucinated link
+  target shows up before it's written instead of after. Advisory only, since
+  a link to a page that doesn't exist yet can be intentional.
 - Real credentials never appear in the project's config files or get shared
   anywhere; they're kept in a local, git-ignored file.
 
