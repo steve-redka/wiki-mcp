@@ -307,6 +307,14 @@ def _harvest_and_cache_guidelines(client: WikiClient, titles: list[str], directo
     guidelines_lib.save_guideline_pages(pages, directory)
     custom_path = guidelines_lib.ensure_custom_guidelines_file(directory)
     typer.echo(f"  Cached {len(pages)} guideline page(s) locally; add personal preferences to {custom_path}")
+    if pages:
+        typer.echo(
+            f"  These are cached raw — a wiki guideline page is often as much account setup and "
+            f"tooling advice as actual editing rules. Consider asking your agent to read "
+            f"{directory / guidelines_lib.HARVESTED_FILENAME} and write a condensed, rules-only "
+            f"version to {directory / guidelines_lib.CONDENSED_FILENAME} (same title keys); "
+            f"get_guidelines prefers it when present."
+        )
 
 
 def _harvest_page_index_interactive(client: WikiClient, index_path: Path) -> None:

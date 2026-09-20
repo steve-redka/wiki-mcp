@@ -19,7 +19,11 @@ wiki-mcp init https://your-wiki-url-here
 - Look at the wiki's templates to learn their structure.
 - Try to find the wiki's editing guidelines, and cache their text locally
   (along with a `guidelines/custom.md` file you can edit yourself, for house
-  style the wiki's own guidelines wouldn't think to mention).
+  style the wiki's own guidelines wouldn't think to mention). A raw
+  guideline page is usually as much account setup and Discord etiquette as
+  actual editing rules; ask your agent to read `guidelines/harvested.json`
+  and write a condensed, rules-only version to `guidelines/condensed.json`
+  (same title keys), and it's used instead of the raw text.
 - Optionally download the wiki's page/redirect titles, so proposed edits can
   flag `[[links]]` that don't actually resolve to a real page.
 - Save everything it learned into a config file for that wiki, so this only

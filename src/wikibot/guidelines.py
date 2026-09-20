@@ -16,6 +16,7 @@ from pathlib import Path
 from wikibot.client import WikiClient
 
 HARVESTED_FILENAME = "harvested.json"
+CONDENSED_FILENAME = "condensed.json"
 CUSTOM_FILENAME = "custom.md"
 
 CUSTOM_GUIDELINES_TEMPLATE = """\
@@ -58,6 +59,29 @@ def load_guideline_pages(directory: str | Path) -> dict[str, str]:
     return json.loads(path.read_text())
 
 
+def save_condensed_pages(pages: dict[str, str], directory: str | Path) -> Path:
+    """Save hand/agent-condensed versions of harvested pages, keyed by the
+    same titles as harvested.json. Nothing in this codebase generates these
+    automatically — a raw wiki guideline page is usually as much account
+    setup and Discord etiquette as it is actual editing rules, and telling
+    those apart is a job for whoever (or whatever agent) reads the page, not
+    a fixed heuristic. Run `wiki-mcp harvest`, then ask your agent to read
+    harvested.json and write the condensed rules here.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / CONDENSED_FILENAME
+    path.write_text(json.dumps(pages, indent=2, sort_keys=True))
+    return path
+
+
+def load_condensed_pages(directory: str | Path) -> dict[str, str]:
+    path = Path(directory) / CONDENSED_FILENAME
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
 def ensure_custom_guidelines_file(directory: str | Path) -> Path:
     """Create a starter custom.md for personal preferences if one doesn't
     exist yet. Never overwrites an existing file, so re-running `harvest`
@@ -74,12 +98,18 @@ def ensure_custom_guidelines_file(directory: str | Path) -> Path:
 def load_guidelines_text(directory: str | Path) -> str:
     """Combine cached harvested guideline pages with custom.md into one
     block of reference text. Pure local read, no network call.
+
+    A page with a condensed.json entry (see save_condensed_pages) uses that
+    instead of its raw harvested wikitext, so an agent reading guidelines
+    isn't handed a full wiki page's worth of account setup and tooling
+    instructions along with the handful of rules that actually matter.
     """
     directory = Path(directory)
     sections: list[str] = []
+    condensed = load_condensed_pages(directory)
 
     for title, wikitext in sorted(load_guideline_pages(directory).items()):
-        sections.append(f"== {title} ==\n{wikitext}")
+        sections.append(f"== {title} ==\n{condensed.get(title, wikitext)}")
 
     custom_path = directory / CUSTOM_FILENAME
     if custom_path.exists():

@@ -5,7 +5,9 @@ from wikibot.guidelines import (
     CUSTOM_GUIDELINES_TEMPLATE,
     ensure_custom_guidelines_file,
     harvest_guideline_pages,
+    load_condensed_pages,
     load_guidelines_text,
+    save_condensed_pages,
     save_guideline_pages,
 )
 from wikibot.wikis import WikiConfig
@@ -84,3 +86,43 @@ def test_ensure_custom_guidelines_file_does_not_overwrite_existing(tmp_path):
 
 def test_load_guidelines_text_empty_when_no_cache(tmp_path):
     assert load_guidelines_text(tmp_path / "nonexistent") == ""
+
+
+def test_load_guidelines_text_prefers_condensed_over_raw(tmp_path):
+    directory = tmp_path / "guidelines"
+    save_guideline_pages(
+        {"Project:Manual of Style": "Full raw wikitext, including account setup and UI tips."},
+        directory,
+    )
+    save_condensed_pages({"Project:Manual of Style": "Use plain language."}, directory)
+
+    text = load_guidelines_text(directory)
+
+    assert "Use plain language." in text
+    assert "account setup" not in text
+
+
+def test_load_guidelines_text_falls_back_to_raw_for_uncondensed_pages(tmp_path):
+    directory = tmp_path / "guidelines"
+    save_guideline_pages(
+        {"Project:Manual of Style": "Raw text.", "Help:Editing": "Also raw."},
+        directory,
+    )
+    save_condensed_pages({"Project:Manual of Style": "Condensed."}, directory)
+
+    text = load_guidelines_text(directory)
+
+    assert "Condensed." in text
+    assert "Also raw." in text
+    assert "Raw text." not in text
+
+
+def test_save_and_load_condensed_pages_roundtrip(tmp_path):
+    directory = tmp_path / "guidelines"
+    save_condensed_pages({"Project:Manual of Style": "Use plain language."}, directory)
+
+    assert load_condensed_pages(directory) == {"Project:Manual of Style": "Use plain language."}
+
+
+def test_load_condensed_pages_empty_when_no_cache(tmp_path):
+    assert load_condensed_pages(tmp_path / "nonexistent") == {}
